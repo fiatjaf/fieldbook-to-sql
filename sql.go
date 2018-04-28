@@ -24,20 +24,32 @@ func buildsqlite(bookPath string, dbPath string) error {
 		return err
 	}
 
-	// var indexes []string
-	// var foreignkeys []string
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	if err != nil {
+		return err
+	}
+
+	model.sheetsById = make(map[string]*Sheet, len(model.Sheets))
 
 	log.Debug().Int("count", len(model.Sheets)).Msg("will insert sheets")
-	for sidx, sheet := range model.Sheets {
-		var fields []Field
-		var fieldNames []string
+	for _, sheet := range model.Sheets {
+		model.sheetsById[sheet.Id] = sheet
 
-		for fidx, field := range sheet.Fields {
-			name := field.Key
+		sheet.fieldsByKey = make(map[string]*Field, len(sheet.Fields))
+		sheet.tableName = strings.Replace(slug.Make(sheet.Title), "-", "_", -1)
+
+		var fields []*Field
+		var fieldNames = []string{"_id text primary key"}
+
+		for _, field := range sheet.Fields {
+			sheet.fieldsByKey[field.Key] = field
+
+			name := ""
 			typ := "text"
 
 			if field.Name != "" {
 				name = strings.Replace(slug.Make(field.Name), "-", "_", -1)
+				field.columnName = name
 			}
 			if name == "__name__" {
 				continue
@@ -51,56 +63,31 @@ func buildsqlite(bookPath string, dbPath string) error {
 				log.Print("formula: ", field.Expression)
 				continue
 			case "join":
-				if name == field.Key {
-					var joinedSheet string
-					for _, join := range model.Joins {
-						log.Print("join search ", join)
-						if join.Left.SheetId == sheet.Id &&
-							join.Left.FieldKey == field.Key {
-							joinedSheet = join.Right.SheetId
-							log.Print("found ", joinedSheet)
-							break
-						}
-						if join.Right.SheetId == sheet.Id &&
-							join.Right.FieldKey == field.Key {
-							joinedSheet = join.Left.SheetId
-							log.Print("found ", joinedSheet)
-							break
-						}
-					}
-					for _, sheet := range model.Sheets {
-						if sheet.Id == joinedSheet {
-							name = sheet.Title
-							break
-						}
-					}
-				}
+				continue
 			case "generic":
 				log.Debug().Str("name", field.Name).Msg("field")
 
 				// investigating actual type
-				var actualType string
 				for _, rec := range sheet.Records {
 					if val, ok := rec[field.Key]; ok {
 						if iv, ok := val.(map[string]interface{}); ok {
 							if thisType, ok := iv["type"].(string); ok {
-								if actualType == "" {
-									actualType = thisType
-								} else if actualType != thisType {
+								if field.actualType == "" {
+									field.actualType = thisType
+								} else if field.actualType != thisType {
 									// mismatch, let's use 'text'
-									log.Debug().Str("act", actualType).
+									log.Debug().Str("act", field.actualType).
 										Str("thi", thisType).Msg("mismatch")
 								}
 							}
 						}
 					}
 				}
-				log.Print("actual type: " + actualType)
-				model.Sheets[sidx].Fields[fidx].ActualType = actualType
-				switch actualType {
-				case "string", "image", "dayofyear":
+				log.Print("actual type: " + field.actualType)
+				switch field.actualType {
+				case "string", "image", "dayofyear", "file", "email":
 					typ = "text"
-				case "numeric", "currency":
+				case "numeric", "currency", "percent":
 					typ = "float"
 				case "boolean":
 					typ = "boolean"
@@ -114,11 +101,9 @@ func buildsqlite(bookPath string, dbPath string) error {
 			fieldNames = append(fieldNames, name+" "+typ)
 		}
 
-		log.Print(
-			"CREATE TABLE " + sheet.Title + " (" + strings.Join(fieldNames, ",") + ")",
-		)
 		_, err := db.Exec(
-			"CREATE TABLE " + sheet.Title + " (" + strings.Join(fieldNames, ",") + ")",
+			"CREATE TABLE " + sheet.tableName +
+				" (" + strings.Join(fieldNames, ",") + ")",
 		)
 		if err != nil {
 			return err
@@ -127,23 +112,32 @@ func buildsqlite(bookPath string, dbPath string) error {
 
 		log.Debug().Int("count", len(sheet.Records)).Msg("will insert records")
 		for _, rec := range sheet.Records {
-			values := make([]interface{}, len(fields))
-			fplaceholders := make([]string, len(fields))
+			values := make([]interface{}, 1+len(fields))
+			fplaceholders := make([]string, 1+len(fields))
+
+			values[0] = rec["_id"]
+			fplaceholders[0] = "?"
 
 			for i, field := range fields {
-				fplaceholders[i] = "?"
+				fplaceholders[i+1] = "?"
 
 				val, ok := rec[field.Key]
-				values[i] = nil
+				values[i+1] = nil
 				if ok && val != nil {
 					if iv, ok := val.(map[string]interface{}); ok {
-						values[i] = iv["value"]
+						values[i+1] = iv["value"]
+						switch field.actualType {
+						case "date":
+							spl := strings.Split(iv["value"].(string), "/")
+							values[i+1] = spl[2] + "-" + spl[0] + "-" + spl[1]
+						}
 					}
 				}
 			}
 
 			_, err := db.Exec(
-				"INSERT INTO "+sheet.Title+" VALUES ("+strings.Join(fplaceholders, ",")+")",
+				"INSERT INTO "+sheet.tableName+" VALUES ("+
+					strings.Join(fplaceholders, ",")+")",
 				values...,
 			)
 			if err != nil {
@@ -151,13 +145,60 @@ func buildsqlite(bookPath string, dbPath string) error {
 			}
 		}
 	}
+
+	// joins must be tracked on separate tables
+	model.joinTableNames = make(map[string]string)
+	for _, join := range model.Joins {
+		sheetLeft := model.sheetsById[join.Left.SheetId]
+		sheetRight := model.sheetsById[join.Right.SheetId]
+
+		fieldLeft := sheetLeft.fieldsByKey[join.Left.FieldKey]
+		columnLeft := fieldLeft.columnName
+		fieldRight := sheetRight.fieldsByKey[join.Right.FieldKey]
+		columnRight := fieldRight.columnName
+		if fieldLeft.columnName == "" {
+			columnLeft = sheetRight.tableName
+		}
+		if fieldRight.columnName == "" {
+			columnRight = sheetLeft.tableName
+		}
+
+		joinTableName := "join=" + sheetLeft.tableName + ":" + columnLeft + "/" + sheetRight.tableName + ":" + columnRight
+		model.joinTableNames[join.Id] = joinTableName
+
+		_, err := db.Exec(`
+CREATE TABLE '` + joinTableName + `' (
+  left text,
+  right text,
+  FOREIGN KEY (left) REFERENCES ` + sheetLeft.tableName + `(_id)
+  FOREIGN KEY (right) REFERENCES ` + sheetRight.tableName + `(_id)
+)
+            `)
+		if err != nil {
+			return err
+		}
+
+		for _, ref := range model.SideEffects.Set.Join[join.Id].Symrefs {
+			_, err := db.Exec(
+				"INSERT INTO '"+model.joinTableNames[ref.JoinId]+"' "+
+					"VALUES (?, ?)",
+				ref.Left.Id, ref.Right.Id,
+			)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
 type Model struct {
-	Sheets      []Sheet   `json:"sheets"`
-	Joins       []JoinDef `json:"joins"`
-	SideEffects struct {
+	Sheets         []*Sheet `json:"sheets"`
+	sheetsById     map[string]*Sheet
+	Joins          []JoinDef `json:"joins"`
+	joinTableNames map[string]string
+	SideEffects    struct {
 		Set struct {
 			Join map[string]struct {
 				Symrefs []JoinEntry `json:"symrefs"`
@@ -171,18 +212,21 @@ type Model struct {
 }
 
 type Sheet struct {
-	Id            string   `json:"_id"`
-	Title         string   `json:"title"`
-	NameFieldMode string   `json:"nameFieldMode"`
-	Fields        []Field  `json:"fields"`
+	Id            string `json:"_id"`
+	Title         string `json:"title"`
+	tableName     string
+	NameFieldMode string `json:"nameFieldMode"`
+	fieldsByKey   map[string]*Field
+	Fields        []*Field `json:"fields"`
 	Records       []Record `json:"records"`
 }
 
 type Field struct {
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	Type        string     `json:"type"`
-	ActualType  string     `json:"-"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	columnName  string
+	Type        string `json:"type"`
+	actualType  string
 	Enum        []string   `json:"enum"`
 	Expression  Expression `json:"expression"`
 	LinkedSheet struct {
