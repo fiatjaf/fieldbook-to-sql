@@ -1,0 +1,6 @@
+*.swo
+*.swp
+*.db
+*.json
+venv
+*.env
