@@ -11,23 +11,26 @@ import (
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
-func buildsqlite(bookPath string, dbPath string) error {
-	f, _ := ioutil.ReadFile(bookPath)
-	var model Model
-	err := json.Unmarshal(f, &model)
+func buildsqlite(bookPath string, dbPath string) (rowcount int, err error) {
+	f, err := ioutil.ReadFile(bookPath)
 	if err != nil {
-		return err
+		return
+	}
+	var model Model
+	err = json.Unmarshal(f, &model)
+	if err != nil {
+		return
 	}
 
 	db, err := sqlx.Connect("sqlite3", dbPath)
 	if err != nil {
-		return err
+		return
 	}
 
-	_, err = db.Exec("PRAGMA foreign_keys = ON")
-	if err != nil {
-		return err
-	}
+	// _, err = db.Exec("PRAGMA foreign_keys = ON")
+	// if err != nil {
+	// 	return err
+	// }
 
 	model.sheetsById = make(map[string]*Sheet, len(model.Sheets))
 
@@ -51,7 +54,7 @@ func buildsqlite(bookPath string, dbPath string) error {
 				name = strings.Replace(slug.Make(field.Name), "-", "_", -1)
 				field.columnName = name
 			}
-			if name == "__name__" {
+			if field.Key == "__name__" {
 				continue
 			}
 
@@ -65,17 +68,28 @@ func buildsqlite(bookPath string, dbPath string) error {
 			case "generic":
 				log.Debug().Str("name", field.Name).Msg("field")
 
+				if name == "" {
+					field.columnName = field.Key
+					name = field.Key
+				}
+
 				// investigating actual type
 				for _, rec := range sheet.Records {
 					if val, ok := rec[field.Key]; ok {
 						if iv, ok := val.(map[string]interface{}); ok {
 							if thisType, ok := iv["type"].(string); ok {
-								if field.actualType == "" {
+								if thisType == "inputerror" {
+									// something is wrong, let's use 'text'
+									field.actualType = "text"
+									break
+								} else if field.actualType == "" {
 									field.actualType = thisType
 								} else if field.actualType != thisType {
 									// mismatch, let's use 'text'
 									log.Debug().Str("act", field.actualType).
 										Str("thi", thisType).Msg("mismatch")
+									field.actualType = "text"
+									break
 								}
 							}
 						}
@@ -98,16 +112,17 @@ func buildsqlite(bookPath string, dbPath string) error {
 			fieldNames = append(fieldNames, name+" "+typ)
 		}
 
-		_, err := db.Exec(
+		_, err = db.Exec(
 			"CREATE TABLE " + sheet.tableName +
 				" (" + strings.Join(fieldNames, ",") + ")",
 		)
 		if err != nil {
-			return err
+			return
 		}
 		log.Debug().Str("table", sheet.Title).Msg("created table")
 
 		log.Debug().Int("count", len(sheet.Records)).Msg("will insert records")
+		rowcount += len(sheet.Records)
 		for _, rec := range sheet.Records {
 			values := make([]interface{}, 1+len(fields))
 			fplaceholders := make([]string, 1+len(fields))
@@ -132,13 +147,13 @@ func buildsqlite(bookPath string, dbPath string) error {
 				}
 			}
 
-			_, err := db.Exec(
+			_, err = db.Exec(
 				"INSERT INTO "+sheet.tableName+" VALUES ("+
 					strings.Join(fplaceholders, ",")+")",
 				values...,
 			)
 			if err != nil {
-				return err
+				return
 			}
 		}
 	}
@@ -162,7 +177,7 @@ func buildsqlite(bookPath string, dbPath string) error {
 		joinTableName := "join=" + sheetLeft.tableName + ":" + columnLeft +
 			"/" + sheetRight.tableName + ":" + columnRight
 
-		_, err := db.Exec(`
+		_, err = db.Exec(`
 CREATE TABLE '` + joinTableName + `' (
   left text,
   right text,
@@ -171,7 +186,7 @@ CREATE TABLE '` + joinTableName + `' (
 )
         `)
 		if err != nil {
-			return err
+			return
 		}
 
 		fieldLeft.joinHere = joinHere{
@@ -190,13 +205,13 @@ CREATE TABLE '` + joinTableName + `' (
 		}
 
 		for _, ref := range model.SideEffects.Set.Join[join.Id].Symrefs {
-			_, err := db.Exec(
+			_, err = db.Exec(
 				"INSERT INTO '"+joinTableName+"' "+
 					"VALUES (?, ?)",
 				ref.Left.Id, ref.Right.Id,
 			)
 			if err != nil {
-				return err
+				return
 			}
 		}
 	}
@@ -257,15 +272,13 @@ FROM '` + sheet.tableName + `'
 )j
 `
 
-		log.Print(sql)
-
-		_, err := db.Exec(sql)
+		_, err = db.Exec(sql)
 		if err != nil {
-			return err
+			return
 		}
 	}
 
-	return nil
+	return
 }
 
 type Model struct {
