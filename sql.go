@@ -57,10 +57,8 @@ func buildsqlite(bookPath string, dbPath string) error {
 
 			switch field.Type {
 			case "enum":
-				// log.Print("enum: ", field.Enum)
 				typ = "text"
 			case "formula":
-				log.Print("formula: ", field.Expression)
 				continue
 			case "join":
 				continue
@@ -83,7 +81,6 @@ func buildsqlite(bookPath string, dbPath string) error {
 						}
 					}
 				}
-				log.Print("actual type: " + field.actualType)
 				switch field.actualType {
 				case "string", "image", "dayofyear", "file", "email":
 					typ = "text"
@@ -147,24 +144,23 @@ func buildsqlite(bookPath string, dbPath string) error {
 	}
 
 	// joins must be tracked on separate tables
-	model.joinTableNames = make(map[string]string)
 	for _, join := range model.Joins {
 		sheetLeft := model.sheetsById[join.Left.SheetId]
 		sheetRight := model.sheetsById[join.Right.SheetId]
 
 		fieldLeft := sheetLeft.fieldsByKey[join.Left.FieldKey]
 		columnLeft := fieldLeft.columnName
-		fieldRight := sheetRight.fieldsByKey[join.Right.FieldKey]
-		columnRight := fieldRight.columnName
 		if fieldLeft.columnName == "" {
 			columnLeft = sheetRight.tableName
 		}
+		fieldRight := sheetRight.fieldsByKey[join.Right.FieldKey]
+		columnRight := fieldRight.columnName
 		if fieldRight.columnName == "" {
 			columnRight = sheetLeft.tableName
 		}
 
-		joinTableName := "join=" + sheetLeft.tableName + ":" + columnLeft + "/" + sheetRight.tableName + ":" + columnRight
-		model.joinTableNames[join.Id] = joinTableName
+		joinTableName := "join=" + sheetLeft.tableName + ":" + columnLeft +
+			"/" + sheetRight.tableName + ":" + columnRight
 
 		_, err := db.Exec(`
 CREATE TABLE '` + joinTableName + `' (
@@ -173,14 +169,29 @@ CREATE TABLE '` + joinTableName + `' (
   FOREIGN KEY (left) REFERENCES ` + sheetLeft.tableName + `(_id)
   FOREIGN KEY (right) REFERENCES ` + sheetRight.tableName + `(_id)
 )
-            `)
+        `)
 		if err != nil {
 			return err
 		}
 
+		fieldLeft.joinHere = joinHere{
+			fieldName:   columnLeft,
+			linkedTable: sheetRight.tableName,
+			fieldHere:   "left",
+			fieldThere:  "right",
+			tableName:   joinTableName,
+		}
+		fieldRight.joinHere = joinHere{
+			fieldName:   columnRight,
+			linkedTable: sheetLeft.tableName,
+			fieldHere:   "right",
+			fieldThere:  "left",
+			tableName:   joinTableName,
+		}
+
 		for _, ref := range model.SideEffects.Set.Join[join.Id].Symrefs {
 			_, err := db.Exec(
-				"INSERT INTO '"+model.joinTableNames[ref.JoinId]+"' "+
+				"INSERT INTO '"+joinTableName+"' "+
 					"VALUES (?, ?)",
 				ref.Left.Id, ref.Right.Id,
 			)
@@ -190,15 +201,78 @@ CREATE TABLE '` + joinTableName + `' (
 		}
 	}
 
+	// finally, the views for pretty "denormalized" data browsing
+	for _, sheet := range model.Sheets {
+		var defaultFields []string
+		var joins []string
+		var joinedSelects []string
+		globalSelects := make([]string, len(sheet.Fields))
+
+		for i, field := range sheet.Fields {
+			globalSelects[i] = field.columnName
+
+			if field.Key == "__name__" {
+				globalSelects[i] = "_name_"
+			} else if field.Type == "formula" {
+				globalSelects[i] = "'' AS " + field.Key
+			} else if field.Type == "join" {
+				j := field.joinHere
+
+				globalSelects[i] = j.fieldName
+
+				joins = append(joins, `
+LEFT JOIN '`+j.linkedTable+`'
+ON '`+j.linkedTable+`'._id = '`+j.tableName+`'.`+j.fieldThere+`
+LEFT JOIN '`+j.tableName+`' 
+ON '`+j.tableName+`'.`+j.fieldHere+` = '`+sheet.tableName+`'._id
+                `)
+
+				joinedSelects = append(
+					joinedSelects,
+					"'"+j.linkedTable+"'._id AS "+j.fieldName,
+				)
+			} else {
+				defaultFields = append(
+					defaultFields,
+					"'"+sheet.tableName+"'."+field.columnName,
+				)
+			}
+		}
+
+		commaBeforeJoinedFields := ""
+		if len(joinedSelects) > 0 {
+			commaBeforeJoinedFields = ","
+		}
+
+		sql := `
+CREATE VIEW 'view:` + sheet.tableName + `' AS
+SELECT ` + strings.Join(globalSelects, ",\n  ") + `
+FROM (
+SELECT
+'` + sheet.tableName + `'._id AS _name_,
+` + strings.Join(defaultFields, ",\n") + commaBeforeJoinedFields + `
+` + strings.Join(joinedSelects, ",\n") + `
+FROM '` + sheet.tableName + `'
+` + strings.Join(joins, "\n") + `
+)j
+`
+
+		log.Print(sql)
+
+		_, err := db.Exec(sql)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 type Model struct {
-	Sheets         []*Sheet `json:"sheets"`
-	sheetsById     map[string]*Sheet
-	Joins          []JoinDef `json:"joins"`
-	joinTableNames map[string]string
-	SideEffects    struct {
+	Sheets      []*Sheet `json:"sheets"`
+	sheetsById  map[string]*Sheet
+	Joins       []JoinDef `json:"joins"`
+	SideEffects struct {
 		Set struct {
 			Join map[string]struct {
 				Symrefs []JoinEntry `json:"symrefs"`
@@ -222,16 +296,23 @@ type Sheet struct {
 }
 
 type Field struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	columnName  string
-	Type        string `json:"type"`
-	actualType  string
-	Enum        []string   `json:"enum"`
-	Expression  Expression `json:"expression"`
-	LinkedSheet struct {
-		Id string `json:"_id"`
-	} `json:"linkedSheet"`
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	columnName string
+	Type       string `json:"type"`
+	actualType string
+	Enum       []string   `json:"enum"`
+	Expression Expression `json:"expression"`
+	joinHere   joinHere
+}
+
+type joinHere struct {
+	fieldName   string
+	linkedTable string
+
+	fieldHere  string
+	fieldThere string
+	tableName  string
 }
 
 type Expression struct {
