@@ -1,0 +1,108 @@
+<!doctype html>
+
+<meta charset=utf-8>
+<title>Fieldbook to SQLite</title>
+<meta name="description" content="Convert your data on Fieldbook to the super-flexible SQLite format.">
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  height: 100vh;
+  background: linear-gradient(to right, #beffbe, #babaff);
+}
+
+a {
+  color: black;
+}
+
+form,
+#message {
+  padding: 18px;
+  font-size: 2em;
+  font-family: monospace;
+}
+
+.images {
+  display: flex;
+  justify-content: space-between;
+  margin: -60px 40px 20px;
+}
+  .images img {
+    width: 30%;
+  }
+
+input,
+legend,
+p,
+button {
+  display: block;
+  width: 100%;
+  padding: 4px;
+  margin: 6px;
+}
+
+input {
+  font-size: 1.5em;
+  font-family: monospace;
+  height: 50px;
+  outline: 0;
+  border: 0;
+}
+button {
+  font-size: 1.5em;
+  border: 0;
+  background: white;
+  text-transform: uppercase;
+  font-family: monospace;
+  cursor: pointer;
+}
+  button:active {
+    background: whitesmoke;
+  }
+
+footer {
+  margin-top: 60px;
+}
+</style>
+
+<form>
+  <div class="images">
+    <img src="fieldbook.png">
+    <img src="sqlite.png">
+  </div>
+  <legend>Put your book id or URL here:</legend>
+  <p>Important: the book must be <a href="http://help.fieldbook.com/reference/sharing-collaboration#-sharing-publicly-via-a-link-read-only" target="_blank">public (view-only)</a>.</p>
+  <input name="fieldbook">
+  <button>Browse</button>
+</form>
+<div id="message"></div>
+
+<footer>
+Reminder: we're not affiliated with Fieldbook at all. Fieldbook doesn't endorse us.
+</footer>
+
+<script>
+document.querySelector('form').addEventListener('submit', function (e) {
+  e.preventDefault()
+
+  var f = e.target.fieldbook.value.trim()
+  if (f.slice(0, 4) === 'http') {
+    if (f.indexOf('/books/') === -1) {
+      message.innerHTML = 'Wrong URL. We need the URL that looks like <code>https://fieldbook.com/books/{id}</code>.'
+      return
+    }
+    f = f.split('/')[4]
+  }
+
+  location.href = 'http://fiatjaf.alhur.es/sqlite-viewer/?url=https://fieldbook-to-sql.alhur.es/book/' + f
+})
+</script>
