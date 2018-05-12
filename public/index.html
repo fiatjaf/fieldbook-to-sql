@@ -15,6 +15,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
+  align-content: center;
   flex-direction: column;
   height: 100vh;
   background: linear-gradient(to right, #beffbe, #babaff);
@@ -34,10 +35,10 @@ form,
 .images {
   display: flex;
   justify-content: space-between;
-  margin: -60px 40px 20px;
+  margin: -80px 40px 20px;
 }
   .images img {
-    width: 30%;
+    height: 200px;
   }
 
 input,
@@ -57,6 +58,15 @@ input {
   outline: 0;
   border: 0;
 }
+
+.buttons {
+  display: flex;
+  margin: 6px;
+}
+  .buttons > * {
+    flex: auto;
+  }
+
 button {
   font-size: 1.5em;
   border: 0;
@@ -82,27 +92,60 @@ footer {
   <legend>Put your book id or URL here:</legend>
   <p>Important: the book must be <a href="http://help.fieldbook.com/reference/sharing-collaboration#-sharing-publicly-via-a-link-read-only" target="_blank">public (view-only)</a>.</p>
   <input name="fieldbook">
-  <button>Browse</button>
+  <div class="buttons">
+    <button>Browse</button>
+    <button type="download">Download</button>
+  </div>
 </form>
 <div id="message"></div>
 
 <footer>
-Reminder: we're not affiliated with Fieldbook at all. Fieldbook doesn't endorse us.
+<p><a href="https://fiatjaf.alhur.es/">@fiatjaf, 2018</a></p>
+<p>We're not affiliated with or endorsed by Fieldbook.</p>
 </footer>
 
 <script>
 document.querySelector('form').addEventListener('submit', function (e) {
   e.preventDefault()
+  location.href = '/book/' + getBookId()
+})
 
-  var f = e.target.fieldbook.value.trim()
+document.querySelector('button[type="download"]').addEventListener('click', function (e) {
+  e.preventDefault()
+  location.href = '/book/' + getBookId() + '.db'
+})
+
+function getBookId () {
+  var f = document.querySelector('form').fieldbook.value.trim()
   if (f.slice(0, 4) === 'http') {
     if (f.indexOf('/books/') === -1) {
       message.innerHTML = 'Wrong URL. We need the URL that looks like <code>https://fieldbook.com/books/{id}</code>.'
       return
     }
-    f = f.split('/')[4]
+    f = f.split('/')[4].split('.')[0]
   }
-
-  location.href = 'http://fiatjaf.alhur.es/sqlite-viewer/?url=https://fieldbook-to-sql.alhur.es/book/' + f
-})
+  return f
+}
+</script>
+<script>;(function (d, s, c) {
+  var x, h, n = Date.now()
+  tc = function (p) {
+    m = s.getItem('_tcx') > n ? s.getItem('_tch') : 'negrume-peido'
+    x = new XMLHttpRequest()
+    x.addEventListener('load', function () {
+      if (x.status == 200) {
+        s.setItem('_tch', x.responseText)
+        s.setItem('_tcx', n + 14400000)
+      }
+    })
+    x.open('GET', 'https://visitantes.alhur.es/'+m+'.xml?r='+d.referrer+'&c='+c+(p?'&p='+p:''))
+    x.send()
+  }
+  tc()
+})(document, localStorage, '4r4nb0yq');</script>
+<script>
+var __REPLAIN_ = '5c033b99-9f25-4e9d-a03e-aa763fd05099';
+(function(u){var s=document.createElement('script');s.type='text/javascript';s.async=true;s.src=u;
+var x=document.getElementsByTagName('script')[0];x.parentNode.insertBefore(s,x);
+})('https://widget.replain.cc/dist/client.js');
 </script>

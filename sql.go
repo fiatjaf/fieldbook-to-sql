@@ -34,7 +34,6 @@ func buildsqlite(bookPath string, dbPath string) (rowcount int, err error) {
 
 	model.sheetsById = make(map[string]*Sheet, len(model.Sheets))
 
-	log.Debug().Int("count", len(model.Sheets)).Msg("will insert sheets")
 	for _, sheet := range model.Sheets {
 		model.sheetsById[sheet.Id] = sheet
 
@@ -66,8 +65,6 @@ func buildsqlite(bookPath string, dbPath string) (rowcount int, err error) {
 			case "join":
 				continue
 			case "generic":
-				log.Debug().Str("name", field.Name).Msg("field")
-
 				if name == "" {
 					field.columnName = field.Key
 					name = field.Key
@@ -119,9 +116,7 @@ func buildsqlite(bookPath string, dbPath string) (rowcount int, err error) {
 		if err != nil {
 			return
 		}
-		log.Debug().Str("table", sheet.Title).Msg("created table")
 
-		log.Debug().Int("count", len(sheet.Records)).Msg("will insert records")
 		rowcount += len(sheet.Records)
 		for _, rec := range sheet.Records {
 			values := make([]interface{}, 1+len(fields))

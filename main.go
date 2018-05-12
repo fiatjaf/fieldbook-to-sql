@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,9 +38,9 @@ func main() {
 	// routes
 	router = mux.NewRouter()
 
-	router.PathPrefix("/").Handler(http.FileServer(http.Dir("public/")))
-	router.HandleFunc("/book/{book}", downloadAndBuild)
 	router.HandleFunc("/book/{book}.db", downloadAndBuild)
+	router.HandleFunc("/book/{book}", downloadAndBuild)
+	router.PathPrefix("/").Handler(http.FileServer(http.Dir("public/")))
 
 	log.Debug().Msg("...routes declared.")
 
@@ -50,7 +51,6 @@ func main() {
 
 func downloadAndBuild(w http.ResponseWriter, r *http.Request) {
 	book := mux.Vars(r)["book"]
-	book = strings.TrimSuffix(book, ".db")
 	log.Info().Str("book", book).Msg("book requested")
 
 	if _, err := os.Stat(book + ".db"); err == nil {
@@ -63,6 +63,9 @@ func downloadAndBuild(w http.ResponseWriter, r *http.Request) {
 		out, _ := os.Create(book + ".json")
 		defer out.Close()
 		resp, err := http.Get("https://fieldbook.com/books/" + book + ".json")
+		if err == nil && resp.StatusCode >= 300 {
+			err = errors.New("fieldbook.com returned: " + resp.Status)
+		}
 		if err != nil {
 			log.Warn().Err(err).Str("book", book).
 				Msg("failed to find fieldbook")
@@ -92,12 +95,13 @@ serve:
 	if !strings.HasSuffix(r.URL.Path, ".db") {
 		stat, _ := os.Stat(book + ".db")
 
-		if stat.Size() > 150000 {
+		if stat.Size() > 250000 {
 			r.URL.Path += ".db"
 			fmt.Fprintf(w, "Your Fieldbook is too large to be browsable in the browser. Download your SQLite database on "+s.ServiceURL+r.URL.String()+" and browse it using a local program.")
 		} else {
 			http.Redirect(w, r, "http://fiatjaf.alhur.es/sqlite-viewer/?url=https://fieldbook-to-sql.alhur.es/book/"+book+".db", 302)
 		}
+		log.Print(stat.Size())
 		return
 	}
 
