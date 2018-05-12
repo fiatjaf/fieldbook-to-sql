@@ -82,6 +82,10 @@ button {
 footer {
   margin-top: 60px;
 }
+  footer > div {
+    display: flex;
+    justify-content: space-between;
+  }
 </style>
 
 <form>
@@ -100,8 +104,11 @@ footer {
 <div id="message"></div>
 
 <footer>
-<p><a href="https://fiatjaf.alhur.es/">@fiatjaf, 2018</a></p>
-<p>We're not affiliated with or endorsed by Fieldbook.</p>
+  <div>
+    <p><a href="https://alhur.es/">alhures software</a></p>
+    <p><a href="https://github.com/fiatjaf/fieldbook-to-sql">source code</a></p>
+  </div>
+  <p>We're not affiliated with or endorsed by Fieldbook.</p>
 </footer>
 
 <script>
